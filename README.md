@@ -2,9 +2,10 @@
 Pseudo-replacement for Cloudflare APO WordPress plugin
 
 Add the following to your wp-config.php file and replace the PUT_YOUR values:
-define( 'CF_API_TOKEN', 'PUT_YOUR_TOKEN_HERE' ); 
+```
+define( 'CF_API_TOKEN', 'PUT_YOUR_TOKEN_HERE' );
 define( 'CF_ZONE_ID', 'PUT_YOUR_ZONE_ID_HERE' );
-
+```
 Token needs Zone -> Purge -> Purge permission
 https://developers.cloudflare.com/fundamentals/api/get-started/create-token/
 
