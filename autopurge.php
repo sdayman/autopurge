@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AutoPurge
- * Description: Auto-purges Cloudflare when posts change. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
- * Version:     1.2.0
+ * Description: Auto-purges Cloudflare when posts change or plugin/theme/core updates. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
+ * Version:     1.3.0
  * Author:      Scott Dayman
  * License:     GPL-2.0-or-later
  */
@@ -179,3 +179,24 @@ function puc_purge_cachetags( array $cachetags ) {
 	// Cloudflare accepts "cachetags" for granular purges.  [oai_citation:0‡developers.cloudflare.com](https://developers.cloudflare.com/api/resources/cache/methods/purge/?utm_source=chatgpt.com)
 	puc_cf_request( [ 'tags' => array_values( $cachetags ) ] );
 }
+
+add_action('upgrader_process_complete', function( $upgrader_object, $options ) {
+	$type = $options['type'] ?? '';
+	$action = $options['action'] ?? '';
+
+	if ( $action === 'update' && in_array( $type, ['plugin', 'theme'], true ) ) {
+		if ( defined( 'CF_API_TOKEN' ) && defined( 'CF_ZONE_ID' ) ) {
+			wp_remote_post( "https://api.cloudflare.com/client/v4/zones/" . CF_ZONE_ID . "/purge_cache", [
+				'headers' => [
+					'Authorization' => 'Bearer ' . CF_API_TOKEN,
+					'Content-Type'  => 'application/json',
+				],
+				'body' => json_encode([
+					'tags' => ['html']
+				]),
+			]);
+
+			error_log("Cache tag 'html' purged due to $type update.");
+		}
+	}
+}, 10, 2 );
