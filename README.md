@@ -1,4 +1,4 @@
-# autopurge
+# AutoPurge
 Pseudo-replacement for Cloudflare APO WordPress plugin
 
 Add the following to your wp-config.php file and replace the PUT_YOUR values:
@@ -21,3 +21,9 @@ Create two Cache Rules in your Cloudflare account, in this order:
  - Set Eligible for Cache, then Edge TTL to 1 Year (or the duration of your choice). Browser TTL to 1 Month (or the duration of your choice)
 
 Upon creating/editing/deleting a post/page, plugin will purge home page, the post/page you're working on, and *most* related pages (category, tag, author, date, etc.). It will not purge unrelated pages that happen to have a widget that includes links to the post/page you're working on.
+
+## Dashboard Tool
+In wp-admin, there is now an AutoPurge Cache tool to Purge Everything, Prefixes, or Cache Tags (cache tags need the Snippet/Worker described below).
+
+## Snippet/Worker
+Use cachetags.js as a Snippet or Worker to add cache tags to your cached resources. Cache Tags consist of file extensions (minus the leading dot), "home" for the front page, "html" for content-type `text/html`, and directories on the website.
