@@ -1,39 +1,30 @@
 <?php
 /**
  * Plugin Name: AutoPurge
- * Description: Collects every URL that can change when a post is created, updated, or deleted and purges them from Cloudflare cache.
- * Version:     1.0.0
+ * Description: Auto-purges Cloudflare when posts change. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
+ * Version:     1.2.0
  * Author:      Scott Dayman
  * License:     GPL-2.0-or-later
  */
 
-/* INSTRUCTIONS *
-Add the following to your wp-config.php file and replace the PUT_YOUR values:
-define( 'CF_API_TOKEN', 'PUT_YOUR_TOKEN_HERE' ); 
-define( 'CF_ZONE_ID', 'PUT_YOUR_ZONE_ID_HERE' );
-*/
+/* ---------- CONFIG ---------- *
+ * Put these in wp-config.php:
+ *
+ * define( 'CF_API_TOKEN', 'PUT_YOUR_TOKEN_HERE' );
+ * define( 'CF_ZONE_ID',   'PUT_YOUR_ZONE_ID_HERE' );
+ * -------------------------------- */
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit; // Don’t run from the browser.
+	exit;
 }
 
-/**
- * Main hook – runs on post save / update *and* when a post is permanently deleted.
- */
-add_action( 'save_post',      'puc_collect_urls_for_purge', 10, 3 );
-add_action( 'wp_trash_post',  'puc_collect_urls_for_purge', 10, 2 ); // $update isn’t available here
+/* ===== 1.  AUTOMATIC PURGES ======================================= */
+add_action( 'save_post',          'puc_collect_urls_for_purge', 10, 3 );
+add_action( 'wp_trash_post',      'puc_collect_urls_for_purge', 10, 2 );
 add_action( 'before_delete_post', 'puc_collect_urls_for_purge', 10, 2 );
 
-/**
- * Build the full list of affected URLs and hand them off to your purge helper.
- *
- * @param int          $post_id ID of the post.
- * @param WP_Post|null $post     The post object (null on `before_delete_post`)
- * @param bool         $update   true when updating an existing post.
- */
 function puc_collect_urls_for_purge( $post_id, $post = null, $update = true ) {
 
-	// Ignore autosaves, revisions, or if the post type isn’t public.
 	if ( wp_is_post_autosave( $post_id ) || wp_is_post_revision( $post_id ) ) {
 		return;
 	}
@@ -42,17 +33,16 @@ function puc_collect_urls_for_purge( $post_id, $post = null, $update = true ) {
 		return;
 	}
 
-	$urls   = [];
+	$urls = [
+		get_permalink( $post_id ),
+		home_url( '/' ),
+		get_feed_link(),
+	];
 
-	// 1. The post itself
-	$urls[] = get_permalink( $post_id );
-
-	// 2. Post-type archive
 	if ( $archive = get_post_type_archive_link( $post->post_type ) ) {
 		$urls[] = $archive;
 	}
 
-	// 3. Taxonomy archives (+ feeds)
 	foreach ( get_object_taxonomies( $post->post_type ) as $tax ) {
 		foreach ( wp_get_post_terms( $post_id, $tax ) as $term ) {
 			$urls[] = get_term_link( $term );
@@ -60,42 +50,132 @@ function puc_collect_urls_for_purge( $post_id, $post = null, $update = true ) {
 		}
 	}
 
-	// 4. Author archive (+ feed)
 	$urls[] = get_author_posts_url( $post->post_author );
 	$urls[] = get_author_feed_link( $post->post_author );
 
-	// 5. Date archives
-	$t       = strtotime( $post->post_date_gmt ?: $post->post_date );
-	$urls[]  = get_year_link( gmdate( 'Y', $t ) );
-	$urls[]  = get_month_link( gmdate( 'Y', $t ), gmdate( 'm', $t ) );
-	$urls[]  = get_day_link( gmdate( 'Y', $t ), gmdate( 'm', $t ), gmdate( 'd', $t ) );
+	$t = strtotime( $post->post_date_gmt ?: $post->post_date );
+	$urls[] = get_year_link( gmdate( 'Y', $t ) );
+	$urls[] = get_month_link( gmdate( 'Y', $t ), gmdate( 'm', $t ) );
+	$urls[] = get_day_link( gmdate( 'Y', $t ),  gmdate( 'm', $t ), gmdate( 'd', $t ) );
 
-	// 6. Front page and the main site feeds
-	$urls[] = home_url( '/' );
-	$urls[] = get_feed_link();
-
-	// Remove duplicates, then purge
 	puc_purge_urls( array_unique( $urls ) );
 }
 
-/**
- * Replace this with the real purge call (Cloudflare API, WP Rocket, etc.).
- *
- * @param string[] $urls List of absolute URLs.
- */
-function puc_purge_urls( array $urls ) {
+/* ===== 2.  MANUAL PURGE DASHBOARD PAGE ========================= */
+add_action( 'admin_menu', function () {
+	add_management_page(
+		'AutoPurge Cache',
+		'AutoPurge Cache',
+		'manage_options',
+		'puc-cloudflare',
+		'puc_render_admin_page'
+	);
+} );
 
-	// Cloudflare API call (token-based, single zone)
-	$zone_id = 'd29361a8f2647587a46785e2a1fc0aa3';
+function puc_render_admin_page() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( __( 'Cheatin’ huh?' ) );
+	}
+
+	// Handle form submit
+	if ( isset( $_POST['puc_action'] ) && check_admin_referer( 'puc_purge' ) ) {
+		switch ( $_POST['puc_action'] ) {
+			case 'purge_everything':
+				puc_purge_everything();
+				$notice = 'Cloudflare “Purge Everything” request sent.';
+				break;
+
+			case 'purge_urls':
+				$raw  = sanitize_textarea_field( wp_unslash( $_POST['puc_urls'] ?? '' ) );
+				$urls = array_filter( array_map( 'trim', preg_split( '/\R+/', $raw ) ) );
+				if ( $urls ) {
+					puc_purge_urls( $urls );
+					$notice = sprintf( '%d URL(s) sent for purge.', count( $urls ) );
+				} else {
+					$notice = 'No valid URLs found.';
+				}
+				break;
+
+			case 'purge_cachetags':
+				$raw      = sanitize_textarea_field( wp_unslash( $_POST['puc_cachetags'] ?? '' ) );
+				$cachetags = array_filter( array_map( 'trim', preg_split( '/\R+/', $raw ) ) );
+				if ( $cachetags ) {
+					puc_purge_cachetags( $cachetags );
+					$notice = sprintf( '%d cachetag(s) sent for purge.', count( $cachetags ) );
+				} else {
+					$notice = 'No valid cache tags found.';
+				}
+				break;
+		}
+		echo '<div class="notice notice-success"><p>' . esc_html( $notice ) . '</p></div>';
+	}
+
+	?>
+	<div class="wrap">
+		<h1>AutoPurge Cache</h1>
+		<form method="post">
+			<?php wp_nonce_field( 'puc_purge' ); ?>
+
+			<h2>Purge Everything</h2>
+			<p><button class="button button-primary" name="puc_action" value="purge_everything">
+				Purge Entire Cache
+			</button></p>
+
+			<hr>
+
+			<h2>Purge Specific URLs</h2>
+			<p>Enter one absolute URL per line.</p>
+			<textarea name="puc_urls" rows="6" style="width: 100%;"></textarea>
+			<p><button class="button" name="puc_action" value="purge_urls">Purge Listed URLs</button></p>
+
+			<hr>
+
+			<h2>Purge by Cache Tag</h2>
+			<p>Enter one URL cache tag per line (File extensions without leading dot, "html", or "home").</p>
+			<textarea name="puc_cachetags" rows="6" style="width: 100%;"></textarea>
+			<p><button class="button" name="puc_action" value="purge_cachetags">Purge Listed Cache Tags</button></p>
+		</form>
+	</div>
+	<?php
+}
+
+/* ===== 3.  CLOUDLFARE API HELPERS =============================== */
+function puc_cf_request( array $payload ) {
+	$token   = defined( 'CF_API_TOKEN' ) ? CF_API_TOKEN : '';
+	$zone_id = defined( 'CF_ZONE_ID' )   ? CF_ZONE_ID   : '';
+	if ( ! $token || ! $zone_id ) {
+		error_log( 'AutoPurge: CF_API_TOKEN or CF_ZONE_ID not defined.' );
+		return;
+	}
+
 	$response = wp_remote_post(
-		"https://api.cloudflare.com/client/v4/zones/$zone_id/purge_cache",
+		"https://api.cloudflare.com/client/v4/zones/{$zone_id}/purge_cache",
 		[
 			'headers' => [
-				'Authorization' => 'Bearer 1BeScRQdq42yCox9F2fpjxztir_2qvHwag4qSmoj',
+				'Authorization' => "Bearer {$token}",
 				'Content-Type'  => 'application/json',
 			],
-			'body'    => wp_json_encode( [ 'files' => array_values( $urls ) ] ),
+			'body'    => wp_json_encode( $payload ),
 			'timeout' => 15,
 		]
 	);
+
+	if ( is_wp_error( $response ) ) {
+		error_log( 'AutoPurge error: ' . $response->get_error_message() );
+	} elseif ( 200 !== wp_remote_retrieve_response_code( $response ) ) {
+		error_log( 'AutoPurge error: ' . wp_remote_retrieve_body( $response ) );
+	}
+}
+
+function puc_purge_everything() {
+	puc_cf_request( [ 'purge_everything' => true ] );
+}
+
+function puc_purge_urls( array $urls ) {
+	puc_cf_request( [ 'files' => array_values( $urls ) ] );
+}
+
+function puc_purge_cachetags( array $cachetags ) {
+	// Cloudflare accepts "cachetags" for granular purges.  [oai_citation:0‡developers.cloudflare.com](https://developers.cloudflare.com/api/resources/cache/methods/purge/?utm_source=chatgpt.com)
+	puc_cf_request( [ 'tags' => array_values( $cachetags ) ] );
 }
