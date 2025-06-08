@@ -20,7 +20,7 @@ Create two Cache Rules in your Cloudflare account, in this order:
 2) `(http.request.uri.path.extension in {"avif" "css" "gif" "gz" "ico" "jpg" "jpeg" "js" "png" "svg" "ttf" "txt" "webp" "woff" "woff2" "xml"})`
  - Set Eligible for Cache, then Edge TTL to 1 Year (or the duration of your choice). Browser TTL to 1 Month (or the duration of your choice)
 
-Upon creating/editing/deleting a post/page, plugin will purge home page, the post/page you're working on, and *most* related pages (category, tag, author, date, etc.). It will not purge unrelated pages that happen to have a widget that includes links to the post/page you're working on.
+Upon creating/editing/deleting a post/page, plugin will purge home page, the post/page you're working on, and *most* related pages (category, tag, author, date, etc.). It will not purge unrelated pages that happen to have a widget that includes links to the post/page you're working on. Also purges all HTML when site updates themes, plugins, or core.
 
 ## Dashboard Tool
 In wp-admin, there is now an AutoPurge Cache tool to Purge Everything, Prefixes, or Cache Tags (cache tags need the Snippet/Worker described below).
