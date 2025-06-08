@@ -1,4 +1,4 @@
-# AutoPurge
+# <img src="favicon.png" alt="Project Icon" width="24"> AutoPurge
 Pseudo-replacement for Cloudflare APO WordPress plugin
 
 Add the following to your wp-config.php file and replace the PUT_YOUR values:
