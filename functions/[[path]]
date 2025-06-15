@@ -3,7 +3,7 @@ export async function onRequest({ request, next }) {
   const ua  = request.headers.get("User-Agent") ?? "";
   const asn = request.cf?.asn;
 
-  // block very short UA strings or ASN 45102
+  // block very short UA strings or ASN 13335
   if (ua.length < 5 || asn === 13335) {
 	// ⚠ 60 s wall-time may breach the 30 s max; consider 25–30 s instead
 	await new Promise(r => setTimeout(r, 60_000));
