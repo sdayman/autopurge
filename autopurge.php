@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AutoPurge
  * Description: Auto-purges Cloudflare when posts change or plugin/theme/core updates. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
- * Version:     1.3.1
+ * Version:     1.3.2
  * Author:      Scott Dayman
  * License:     GPL-2.0-or-later
  */
@@ -12,6 +12,11 @@
  *
  * define( 'CF_API_TOKEN', 'PUT_YOUR_TOKEN_HERE' );
  * define( 'CF_ZONE_ID',   'PUT_YOUR_ZONE_ID_HERE' );
+ *
+ * Set these if you want debugging output to wp-content/debug.log
+ * define( 'WP_DEBUG', true );
+ * define( 'WP_DEBUG_LOG', true );
+ * define( 'WP_DEBUG_DISPLAY', false ); // Optional, hides on-screen errors
  * -------------------------------- */
 
 if ( ! defined( 'ABSPATH' ) ) {
