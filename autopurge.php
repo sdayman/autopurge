@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AutoPurge
  * Description: Auto-purges Cloudflare when posts change or plugin/theme/core updates. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
- * Version:     1.3.0
+ * Version:     1.3.1
  * Author:      Scott Dayman
  * License:     GPL-2.0-or-later
  */
@@ -83,6 +83,7 @@ function puc_render_admin_page() {
 			case 'purge_everything':
 				puc_purge_everything();
 				$notice = 'Cloudflare “Purge Everything” request sent.';
+				error_log( 'AutoPurge: Manual "Purge Everything" triggered from dashboard.' );
 				break;
 
 			case 'purge_urls':
@@ -90,6 +91,7 @@ function puc_render_admin_page() {
 				$urls = array_filter( array_map( 'trim', preg_split( '/\R+/', $raw ) ) );
 				if ( $urls ) {
 					puc_purge_urls( $urls );
+					error_log( 'AutoPurge: Manual URL purge triggered: ' . implode( ', ', $urls ) );
 					$notice = sprintf( '%d URL(s) sent for purge.', count( $urls ) );
 				} else {
 					$notice = 'No valid URLs found.';
@@ -101,6 +103,7 @@ function puc_render_admin_page() {
 				$cachetags = array_filter( array_map( 'trim', preg_split( '/\R+/', $raw ) ) );
 				if ( $cachetags ) {
 					puc_purge_cachetags( $cachetags );
+					error_log( 'AutoPurge: Manual cache tag purge triggered: ' . implode( ', ', $cachetags ) );
 					$notice = sprintf( '%d cachetag(s) sent for purge.', count( $cachetags ) );
 				} else {
 					$notice = 'No valid cache tags found.';
