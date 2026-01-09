@@ -96,7 +96,10 @@ function puc_render_admin_page()
                     wp_unslash($_POST["puc_urls"] ?? "")
                 );
                 $urls = array_filter(
-                    array_map("trim", preg_split("/\R+/", $raw))
+                    array_map("trim", preg_split("/\R+/", $raw)),
+                    function ($url) {
+                        return filter_var($url, FILTER_VALIDATE_URL) !== false;
+                    }
                 );
                 if ($urls) {
                     puc_purge_urls($urls);
@@ -168,7 +171,7 @@ function puc_render_admin_page()
 	<?php
 }
 
-/* ===== 3.  CLOUDLFARE API HELPERS =============================== */
+/* ===== 3.  CLOUDFLARE API HELPERS =============================== */
 function puc_cf_request(array $payload)
 {
     $token = defined("CF_API_TOKEN") ? CF_API_TOKEN : "";
@@ -224,24 +227,8 @@ add_action(
             $action === "update" &&
             in_array($type, ["plugin", "theme"], true)
         ) {
-            if (defined("CF_API_TOKEN") && defined("CF_ZONE_ID")) {
-                wp_remote_post(
-                    "https://api.cloudflare.com/client/v4/zones/" .
-                        CF_ZONE_ID .
-                        "/purge_cache",
-                    [
-                        "headers" => [
-                            "Authorization" => "Bearer " . CF_API_TOKEN,
-                            "Content-Type" => "application/json",
-                        ],
-                        "body" => json_encode([
-                            "tags" => ["html"],
-                        ]),
-                    ]
-                );
-
-                error_log("Cache tag 'html' purged due to $type update.");
-            }
+            puc_purge_cachetags(["html"]);
+            error_log("AutoPurge: Cache tag 'html' purged due to $type update.");
         }
     },
     10,
