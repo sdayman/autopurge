@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AutoPurge
  * Description: Auto-purges Cloudflare when posts change or plugin/theme/core updates. Includes dashboard tool for manual purges (Everything, URLs, or Cache Tags).
- * Version:     1.3.3
+ * Version:     1.4.0
  * Author:      Scott Dayman
  * License:     GPL-2.0-or-later
  */
@@ -24,6 +24,9 @@ if (!defined("ABSPATH")) {
     exit();
 }
 
+// Cloudflare API limits
+define("PUC_CF_BATCH_LIMIT", 30);
+
 /* ===== 1.  AUTOMATIC PURGES ======================================= */
 add_action("save_post", "puc_collect_urls_for_purge", 10, 3);
 add_action("wp_trash_post", "puc_collect_urls_for_purge", 10, 2);
@@ -39,15 +42,30 @@ function puc_collect_urls_for_purge($post_id, $post = null, $update = true)
         return;
     }
 
+    // Debounce: collect URLs in transient, purge on shutdown
+    $transient_key = "puc_pending_urls";
+    $pending = get_transient($transient_key) ?: [];
+
     $urls = [get_permalink($post_id), home_url("/"), get_feed_link()];
 
     if ($archive = get_post_type_archive_link($post->post_type)) {
         $urls[] = $archive;
+        // Add paginated archive URLs
+        $urls = array_merge($urls, puc_get_paginated_urls($archive));
     }
 
     foreach (get_object_taxonomies($post->post_type) as $tax) {
-        foreach (wp_get_post_terms($post_id, $tax) as $term) {
-            $urls[] = get_term_link($term);
+        $terms = wp_get_post_terms($post_id, $tax);
+        if (is_wp_error($terms)) {
+            continue;
+        }
+        foreach ($terms as $term) {
+            $term_link = get_term_link($term);
+            if (!is_wp_error($term_link)) {
+                $urls[] = $term_link;
+                // Add paginated term URLs
+                $urls = array_merge($urls, puc_get_paginated_urls($term_link));
+            }
             $urls[] = get_term_feed_link($term->term_id, $tax);
         }
     }
@@ -56,11 +74,45 @@ function puc_collect_urls_for_purge($post_id, $post = null, $update = true)
     $urls[] = get_author_feed_link($post->post_author);
 
     $t = strtotime($post->post_date_gmt ?: $post->post_date);
-    $urls[] = get_year_link(gmdate("Y", $t));
-    $urls[] = get_month_link(gmdate("Y", $t), gmdate("m", $t));
-    $urls[] = get_day_link(gmdate("Y", $t), gmdate("m", $t), gmdate("d", $t));
+    $year_link = get_year_link(gmdate("Y", $t));
+    $month_link = get_month_link(gmdate("Y", $t), gmdate("m", $t));
+    $day_link = get_day_link(gmdate("Y", $t), gmdate("m", $t), gmdate("d", $t));
+    $urls[] = $year_link;
+    $urls[] = $month_link;
+    $urls[] = $day_link;
+    // Add paginated date archive URLs
+    $urls = array_merge($urls, puc_get_paginated_urls($year_link));
+    $urls = array_merge($urls, puc_get_paginated_urls($month_link));
 
-    puc_purge_urls(array_unique($urls));
+    // Merge with pending URLs and store
+    $pending = array_unique(array_merge($pending, $urls));
+    set_transient($transient_key, $pending, 60);
+
+    // Schedule purge on shutdown (runs once even with multiple saves)
+    if (!has_action("shutdown", "puc_flush_pending_urls")) {
+        add_action("shutdown", "puc_flush_pending_urls");
+    }
+}
+
+function puc_get_paginated_urls($base_url, $max_pages = 5)
+{
+    $urls = [];
+    for ($i = 2; $i <= $max_pages; $i++) {
+        $urls[] = trailingslashit($base_url) . "page/" . $i . "/";
+    }
+    return $urls;
+}
+
+function puc_flush_pending_urls()
+{
+    $transient_key = "puc_pending_urls";
+    $urls = get_transient($transient_key);
+    if ($urls && is_array($urls)) {
+        delete_transient($transient_key);
+        // Filter out any non-string values (WP_Error objects, etc.)
+        $urls = array_filter($urls, "is_string");
+        puc_purge_urls(array_unique($urls));
+    }
 }
 
 /* ===== 2.  MANUAL PURGE DASHBOARD PAGE ========================= */
@@ -82,10 +134,11 @@ function puc_render_admin_page()
 
     // Handle form submit
     if (isset($_POST["puc_action"]) && check_admin_referer("puc_purge")) {
+        $notice_type = "success";
         switch ($_POST["puc_action"]) {
             case "purge_everything":
                 puc_purge_everything();
-                $notice = "Cloudflare “Purge Everything” request sent.";
+                $notice = "Cloudflare "Purge Everything" request sent.";
                 error_log(
                     'AutoPurge: Manual "Purge Everything" triggered from dashboard.'
                 );
@@ -113,6 +166,7 @@ function puc_render_admin_page()
                     );
                 } else {
                     $notice = "No valid URLs found.";
+                    $notice_type = "warning";
                 }
                 break;
 
@@ -135,10 +189,11 @@ function puc_render_admin_page()
                     );
                 } else {
                     $notice = "No valid cache tags found.";
+                    $notice_type = "warning";
                 }
                 break;
         }
-        echo '<div class="notice notice-success"><p>' .
+        echo '<div class="notice notice-' . esc_attr($notice_type) . '"><p>' .
             esc_html($notice) .
             "</p></div>";
     }
@@ -178,10 +233,12 @@ function puc_cf_request(array $payload)
     $zone_id = defined("CF_ZONE_ID") ? CF_ZONE_ID : "";
     if (!$token || !$zone_id) {
         error_log("AutoPurge: CF_API_TOKEN or CF_ZONE_ID not defined.");
-        return;
+        return false;
     }
 
-    error_log("AutoPurge payload: " . wp_json_encode($payload));
+    if (defined("WP_DEBUG") && WP_DEBUG) {
+        error_log("AutoPurge payload: " . wp_json_encode($payload));
+    }
 
     $response = wp_remote_post(
         "https://api.cloudflare.com/client/v4/zones/{$zone_id}/purge_cache",
@@ -197,24 +254,48 @@ function puc_cf_request(array $payload)
 
     if (is_wp_error($response)) {
         error_log("AutoPurge error: " . $response->get_error_message());
+        return false;
     } elseif (200 !== wp_remote_retrieve_response_code($response)) {
         error_log("AutoPurge error: " . wp_remote_retrieve_body($response));
+        return false;
     }
+
+    return true;
 }
 
 function puc_purge_everything()
 {
-    puc_cf_request(["purge_everything" => true]);
+    return puc_cf_request(["purge_everything" => true]);
 }
 
 function puc_purge_urls(array $urls)
 {
-    puc_cf_request(["files" => array_values($urls)]);
+    $urls = array_values($urls);
+    $success = true;
+
+    // Cloudflare limits to 30 URLs per request
+    foreach (array_chunk($urls, PUC_CF_BATCH_LIMIT) as $batch) {
+        if (!puc_cf_request(["files" => $batch])) {
+            $success = false;
+        }
+    }
+
+    return $success;
 }
 
 function puc_purge_cachetags(array $cachetags)
 {
-    puc_cf_request(["tags" => array_values($cachetags)]);
+    $cachetags = array_values($cachetags);
+    $success = true;
+
+    // Cloudflare limits to 30 tags per request
+    foreach (array_chunk($cachetags, PUC_CF_BATCH_LIMIT) as $batch) {
+        if (!puc_cf_request(["tags" => $batch])) {
+            $success = false;
+        }
+    }
+
+    return $success;
 }
 
 add_action(
@@ -225,7 +306,7 @@ add_action(
 
         if (
             $action === "update" &&
-            in_array($type, ["plugin", "theme"], true)
+            in_array($type, ["plugin", "theme", "core"], true)
         ) {
             puc_purge_cachetags(["html"]);
             error_log("AutoPurge: Cache tag 'html' purged due to $type update.");
