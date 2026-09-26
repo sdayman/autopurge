@@ -11,8 +11,6 @@ AutoPurge is a WordPress plugin that automatically purges Cloudflare cache when 
    - Provides a manual purge dashboard in wp-admin (Tools > AutoPurge Cache)
    - Purges HTML cache tag on plugin/theme updates
 
-2. **cachetags.js** - Cloudflare Snippet/Worker that assigns cache tags to requests (tagging logic documented in file comments)
-
 ## Configuration
 
 The plugin requires two constants in wp-config.php:
@@ -28,7 +26,7 @@ Debug logging outputs to wp-content/debug.log when `WP_DEBUG` and `WP_DEBUG_LOG`
 Uses `api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache` with three purge methods:
 - `purge_everything` - Clears entire zone cache
 - `files` - Purges specific URLs
-- `tags` - Purges by cache tag (requires cachetags.js Worker)
+- `tags` - Purges by cache tag (set by the origin's `Cache-Tag` response header; no Worker needed)
 
 ## Code Conventions
 
